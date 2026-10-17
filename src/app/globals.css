@@ -1,1 +1,112 @@
 @import "tailwindcss";
+
+@theme {
+  /* Surfaces */
+  --color-canvas: #0b0d14;
+  --color-surface: #131722;
+  --color-surface-raised: #1a1f2c;
+  --color-line: #232a3a;
+  --color-line-strong: #323b51;
+
+  /* Text (all pass WCAG AA on canvas and surface) */
+  --color-ink: #f1f5f9;
+  --color-ink-muted: #a7b0c0;
+  --color-ink-subtle: #7d889c;
+
+  /* Brand and status */
+  --color-brand: #fb923c;
+  --color-brand-strong: #f97316;
+  --color-brand-deep: #ea580c;
+  --color-brand-deeper: #c2410c;
+  --color-live: #34d399;
+  --color-danger: #f87171;
+
+  --animate-flicker: flicker 1.8s ease-in-out infinite;
+  --animate-glow: glow 3s ease-in-out infinite;
+  --animate-blink: blink 2s ease-in-out infinite;
+  --animate-enter: enter 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-pop: pop 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+
+  @keyframes flicker {
+    0%, 100% { transform: scale(1, 1) skewX(0deg); }
+    25% { transform: scale(0.97, 1.04) skewX(-1.5deg); }
+    50% { transform: scale(1.02, 0.97) skewX(1deg); }
+    75% { transform: scale(0.98, 1.03) skewX(-0.75deg); }
+  }
+  @keyframes glow {
+    0%, 100% { opacity: 0.55; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.08); }
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @keyframes enter {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+@theme inline {
+  --font-display: var(--font-syne), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background-color: var(--color-canvas);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* No double-tap zoom on controls; pointer cursor on anything clickable. */
+  a, button, input, label, select, [role="button"] {
+    touch-action: manipulation;
+  }
+  button:not(:disabled), [role="button"] {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: rgb(251 146 60 / 0.35);
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.75);
+    cursor: pointer;
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

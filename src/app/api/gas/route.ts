@@ -1,69 +1,82 @@
-import { connectToDatabase } from '@/app/lib/mongodb';
-import { GasSession } from '@/app/models/GasSession';
 import { NextResponse } from 'next/server';
+import {
+  isDuplicateKeyError,
+  jsonError,
+  parseRange,
+  SESSION_LIST_LIMIT,
+  sumUsage,
+  timerState,
+  toSessionEntry,
+  unauthorized,
+} from '@/app/lib/api-utils';
+import { getCurrentUser } from '@/app/lib/auth';
+import { connectToDatabase } from '@/app/lib/mongodb';
+import type { MySessionsResponse, TimerActionResponse } from '@/app/lib/types';
+import { GasSession } from '@/app/models/GasSession';
 
-
-// Helper to format seconds for the backend responses
-const formatTime = (totalSeconds: number) => {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  return `${m}m ${s}s`;
-};
-
+// Start or stop the signed-in user's timer. Who the user is always comes from
+// the session cookie, never from the request body.
 export async function POST(req: Request) {
-  const { userEmail, userName, userImage, action } = await req.json();
+  const user = await getCurrentUser();
+  if (!user) return unauthorized();
+
+  const body = await req.json().catch(() => null);
+  const action = body?.action;
+  if (action !== 'START' && action !== 'STOP') return jsonError('Invalid action', 400);
+
   await connectToDatabase();
+  const running = await GasSession.findOne({ userEmail: user.email, endTime: null });
 
   if (action === 'START') {
-    const activeSession = await GasSession.findOne({ userEmail, endTime: null });
-    if (activeSession) return NextResponse.json({ error: 'Timer running' }, { status: 400 });
-
-    const newSession = await GasSession.create({ userEmail, userName, userImage, startTime: new Date() });
-    return NextResponse.json(newSession);
-  } 
-  
-  if (action === 'STOP') {
-    const activeSession = await GasSession.findOne({ userEmail, endTime: null });
-    if (!activeSession) return NextResponse.json({ error: 'No active timer' }, { status: 400 });
-
-    const endTime = new Date();
-    const durationInSeconds = Math.floor((endTime.getTime() - activeSession.startTime.getTime()) / 1000);
-
-    activeSession.endTime = endTime;
-    activeSession.durationInSeconds = durationInSeconds;
-    await activeSession.save();
-
-    return NextResponse.json(activeSession);
+    if (running) return jsonError('A timer is already running.', 409, timerState(running));
+    try {
+      const session = await GasSession.create({
+        userEmail: user.email,
+        userName: user.name,
+        userImage: user.image,
+        startTime: new Date(),
+      });
+      return NextResponse.json<TimerActionResponse>(timerState(session), { status: 201 });
+    } catch (error) {
+      // Lost a race against a simultaneous start (see the unique index on the model).
+      if (!isDuplicateKeyError(error)) throw error;
+      const winner = await GasSession.findOne({ userEmail: user.email, endTime: null });
+      return jsonError('A timer is already running.', 409, timerState(winner));
+    }
   }
 
-  return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
+  if (!running) return jsonError('No timer is running.', 409, timerState(null));
+
+  const endTime = new Date();
+  running.endTime = endTime;
+  running.durationInSeconds = Math.max(0, Math.floor((endTime.getTime() - running.startTime.getTime()) / 1000));
+  await running.save();
+
+  return NextResponse.json<TimerActionResponse>({ ...timerState(null), session: toSessionEntry(running) });
 }
 
+// The signed-in user's completed sessions in the requested range.
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const userEmail = searchParams.get('userEmail');
-  const startDate = searchParams.get('startDate');
-  const endDate = searchParams.get('endDate');
+  const user = await getCurrentUser();
+  if (!user) return unauthorized();
+
+  const range = parseRange(new URL(req.url).searchParams);
+  if ('error' in range) return jsonError(range.error, 400);
 
   await connectToDatabase();
+  const match = { userEmail: user.email, endTime: { $ne: null }, ...range };
+  const [sessions, summary] = await Promise.all([
+    GasSession.find(match)
+      .sort({ startTime: -1 })
+      .limit(SESSION_LIST_LIMIT)
+      .select('startTime endTime durationInSeconds')
+      .lean(),
+    sumUsage(match),
+  ]);
 
-  let query: any = { endTime: { $ne: null } }; // Only completed sessions
-  if (userEmail) query.userEmail = userEmail;
-  
-  if (startDate && endDate) {
-    // End date should include the full day up to 23:59:59
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-    query.startTime = { $gte: new Date(startDate), $lte: end };
-  }
-
-  const sessions = await GasSession.find(query).sort({ startTime: -1 });
-  const totalSeconds = sessions.reduce((sum, session) => sum + session.durationInSeconds, 0);
-
-  return NextResponse.json({
-    sessions,
-    summary: { totalSeconds, formattedTotal: formatTime(totalSeconds) }
+  return NextResponse.json<MySessionsResponse>({
+    sessions: sessions.map(toSessionEntry),
+    summary,
+    truncated: summary.count > sessions.length,
   });
 }

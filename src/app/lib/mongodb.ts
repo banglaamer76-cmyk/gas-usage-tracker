@@ -1,19 +1,33 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const MONGODB_URI = process.env.MONGODB_URI!;
+type MongooseCache = {
+  conn: typeof mongoose | null;
+  promise: Promise<typeof mongoose> | null;
+};
 
-if (!MONGODB_URI) {
-  throw new Error('Please define the MONGODB_URI environment variable');
-}
+// Keep one connection per server process: survives hot reloads in development
+// and is reused across invocations of a warm serverless function.
+const globalForMongoose = globalThis as typeof globalThis & {
+  mongooseCache?: MongooseCache;
+};
 
-let cached = (global as any).mongoose || { conn: null, promise: null };
+const cached = (globalForMongoose.mongooseCache ??= { conn: null, promise: null });
 
 export async function connectToDatabase() {
   if (cached.conn) return cached.conn;
 
-  if (!cached.promise) {
-    cached.promise = mongoose.connect(MONGODB_URI).then((mongoose) => mongoose);
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error("Please define the MONGODB_URI environment variable");
   }
-  cached.conn = await cached.promise;
+
+  cached.promise ??= mongoose.connect(uri);
+  try {
+    cached.conn = await cached.promise;
+  } catch (error) {
+    // Let the next request retry instead of reusing a rejected promise forever.
+    cached.promise = null;
+    throw error;
+  }
   return cached.conn;
 }
